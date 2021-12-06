@@ -15,8 +15,8 @@ This change will also be reflected on branch names, existing `master` (the lates
 ## Usage
 
 ```bash
-go get -u github.com/sequra/logstash_exporter
-cd $GOPATH/src/github.com/sequra/logstash_exporter
+go get -u github.com/Dongzhenpu/logstash_exporter
+cd $GOPATH/src/github.com/Dongzhenpu/logstash_exporter
 make
 ./logstash_exporter --web.listen-address=:1234 --logstash.endpoint="http://localhost:1235"
 ```
@@ -35,12 +35,7 @@ Flags:
                           API listens
       --web.listen-address=":9198"
                           Address on which to expose metrics and web interface.
-      --log.level="info"  Only log messages with the given severity or above.
-                          Valid levels: [debug, info, warn, error, fatal]
-      --log.format="logger:stderr"
-                          Set the log target and format. Example:
-                          "logger:syslog?appname=bob&local=7" or
-                          "logger:stdout?json=true"
+      --web.config=""     Path to config yaml file that can enable TLS or authentication.
       --version           Show application version.
 ```
 

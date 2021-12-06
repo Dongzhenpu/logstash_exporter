@@ -2,9 +2,11 @@ package collector
 
 import (
 	"encoding/json"
+	"github.com/go-kit/log/level"
 	"net/http"
+	"os"
 
-	"github.com/prometheus/common/log"
+	"github.com/go-kit/log"
 )
 
 // HTTPHandler type
@@ -28,21 +30,23 @@ type HTTPHandlerInterface interface {
 }
 
 func getMetrics(h HTTPHandlerInterface, target interface{}) error {
+	w := log.NewSyncWriter(os.Stdout)
+	logger := log.NewLogfmtLogger(w)
 	response, err := h.Get()
 	if err != nil {
-		log.Errorf("Cannot retrieve metrics: %v", err)
+		level.Error(logger).Log("msg", "Cannot retrieve metrics", "err", err)
 		return err
 	}
 
 	defer func() {
 		if err := response.Body.Close(); err != nil {
-			log.Errorf("Cannot close response body: %v", err)
+			level.Error(logger).Log("msg", "Cannot close response body", "err", err)
 		}
 	}()
 
 	err = json.NewDecoder(response.Body).Decode(target)
 	if err != nil {
-		log.Errorf("Cannot parse Logstash response json: %v", err)
+		level.Error(logger).Log("msg", "Cannot parse Logstash response json", "err", err)
 	}
 
 	return err

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"github.com/go-kit/log/level"
 	"net/http"
 	_ "net/http/pprof"
 	"sync"
@@ -8,8 +10,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/prometheus/common/log"
 	"github.com/prometheus/common/version"
+	"github.com/prometheus/exporter-toolkit/web"
 	"github.com/sequra/logstash_exporter/collector"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
@@ -29,38 +31,6 @@ var (
 // LogstashCollector collector type
 type LogstashCollector struct {
 	collectors map[string]collector.Collector
-}
-
-// NewLogstashCollector register a logstash collector
-func NewLogstashCollector(logstashEndpoint string) (*LogstashCollector, error) {
-	nodeStatsCollector, err := collector.NewNodeStatsCollector(logstashEndpoint)
-	if err != nil {
-		log.Fatalf("Cannot register a new collector: %v", err)
-	}
-
-	nodeInfoCollector, err := collector.NewNodeInfoCollector(logstashEndpoint)
-	if err != nil {
-		log.Fatalf("Cannot register a new collector: %v", err)
-	}
-
-	return &LogstashCollector{
-		collectors: map[string]collector.Collector{
-			"node": nodeStatsCollector,
-			"info": nodeInfoCollector,
-		},
-	}, nil
-}
-
-func listen(exporterBindAddress string) {
-	http.Handle("/metrics", promhttp.Handler())
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/metrics", http.StatusMovedPermanently)
-	})
-
-	log.Infoln("Starting server on", exporterBindAddress)
-	if err := http.ListenAndServe(exporterBindAddress, nil); err != nil {
-		log.Fatalf("Cannot start Logstash exporter: %s", err)
-	}
 }
 
 // Describe logstash metrics
@@ -88,11 +58,14 @@ func execute(name string, c collector.Collector, ch chan<- prometheus.Metric) {
 	duration := time.Since(begin)
 	var result string
 
+	logger := getLogger("info", "stdout", "logfmt")
 	if err != nil {
-		log.Debugf("ERROR: %s collector failed after %fs: %s", name, duration.Seconds(), err)
+		msg := fmt.Sprintf("ERROR: %s collector failed after %fs: %s", name, duration.Seconds(), err)
+		level.Debug(logger).Log("msg", msg)
 		result = "error"
 	} else {
-		log.Debugf("OK: %s collector succeeded after %fs.", name, duration.Seconds())
+		msg := fmt.Sprintf("OK: %s collector succeeded after %fs.", name, duration.Seconds())
+		level.Debug(logger).Log("msg", msg)
 		result = "success"
 	}
 	scrapeDurations.WithLabelValues(name, result).Observe(duration.Seconds())
@@ -104,23 +77,60 @@ func init() {
 
 func main() {
 	var (
-		logstashEndpoint    = kingpin.Flag("logstash.endpoint", "The protocol, host and port on which logstash metrics API listens").Default("http://localhost:9600").String()
-		exporterBindAddress = kingpin.Flag("web.listen-address", "Address on which to expose metrics and web interface.").Default(":9198").String()
+		logstashEndpoint    = kingpin.Flag("logstash.endpoint",
+			"The protocol, host and port on which logstash metrics API listens").
+			Default("http://localhost:9600").String()
+		exporterBindAddress = kingpin.Flag("web.listen-address",
+			"Address on which to expose metrics and web interface.").
+			Default(":9198").String()
+		configFile = kingpin.Flag("web.config",
+			"Path to config yaml file that can enable TLS or authentication.",
+		).Default("").String()
 	)
 
-	log.AddFlags(kingpin.CommandLine)
 	kingpin.Version(version.Print("logstash_exporter"))
-	kingpin.HelpFlag.Short('h')
+	kingpin.CommandLine.HelpFlag.Short('h')
 	kingpin.Parse()
 
-	logstashCollector, err := NewLogstashCollector(*logstashEndpoint)
+	logger := getLogger("info", "stdout", "logfmt")
+
+	nodeStatsCollector, err := collector.NewNodeStatsCollector(*logstashEndpoint)
 	if err != nil {
-		log.Fatalf("Cannot register a new Logstash Collector: %v", err)
+		_ = level.Error(logger).Log(
+			"msg", "Cannot register a new collector",
+			"err", err)
+	}
+
+	nodeInfoCollector, err := collector.NewNodeInfoCollector(*logstashEndpoint)
+	if err != nil {
+		_ = level.Error(logger).Log(
+			"msg", "Cannot register a new collector",
+			"err", err)
+	}
+
+	logstashCollector:= &LogstashCollector{
+		collectors: map[string]collector.Collector{
+			"node": nodeStatsCollector,
+			"info": nodeInfoCollector,
+		},
 	}
 
 	prometheus.MustRegister(logstashCollector)
 
-	log.Infoln("Starting Logstash exporter", version.Info())
-	log.Infoln("Build context", version.BuildContext())
-	listen(*exporterBindAddress)
+	_ = level.Info(logger).Log("msg", "starting logstash exporter")
+	_ = level.Info(logger).Log("msg", "build context")
+
+	http.Handle("/metrics", promhttp.Handler())
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/metrics", http.StatusMovedPermanently)
+	})
+	server := &http.Server{
+		Addr: *exporterBindAddress,
+	}
+	_ = level.Info(logger).Log("msg", "Starting server", "listen address", *exporterBindAddress)
+	if err:= web.ListenAndServe(server, *configFile, logger); err != nil {
+		_ = level.Error(logger).Log(
+			"msg", "Cannot start Logstash exporter",
+			"err", err)
+	}
 }
